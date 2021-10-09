@@ -1,0 +1,242 @@
+- hosts: 192.168.1.1
+  vars:
+    mullvad_privkey: !vault |
+      $ANSIBLE_VAULT;1.1;AES256
+      34356130343266376233363639323365303334353637656462653138653662386639636238333030
+      6364663134616366396130653235303764386230353538620a393263626137396437643230323931
+      62386237663436383237313736373933653561373433343762333462393935373430633663373066
+      6330366665323432350a663236353263316632393337333165326466613065316436613137636439
+      38303165303966366134396131393336633162666639353032633038376164613330343262623739
+      3734653436383336303036323536613764326539313039343265
+    mullvad_de12_pubkey: !vault |
+      $ANSIBLE_VAULT;1.1;AES256
+      39383233336130613461653662613639653062656565653138643066393530386234313037326137
+      3563336366613065303361623264616132303262656461320a633431376262326365616430656265
+      35623164323730356636383439653835633666343830316563373738336234633062303565653532
+      3462663136393761660a326631373939346635366464343538636462663634306662636661633636
+      32333866616665343033313030333263623833623766616530333762373266653261386565636636
+      6638336435656163653538396531326361643366656332363666
+
+  roles:
+  - gekmihesg.openwrt
+
+  tasks:
+  - name: install packages
+    opkg: name={{ item }} state=present
+    with_items:
+    - openssh-sftp-server
+    - python3
+    - tailscale
+    - adblock
+    - luci-app-adblock
+    - kmod-usb-net-ipheth
+    - usbmuxd
+    - libimobiledevice
+    - usbutils
+    - mwan3
+    - luci-app-mwan3
+
+  - name: Add pubkey
+    ansible.builtin.lineinfile:
+      path: /etc/dropbear/authorized_keys
+      line: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFwawprQXEkGl38Q7T0PNseL0vpoyr4TbATMkEaZJTWQ
+
+  - name: enable tailscale
+    service:
+      name: tailscale
+      enabled: yes
+
+  # iPhone tethering
+  # ================
+  - name: autostart usbmuxd
+    ansible.builtin.lineinfile:
+      path: /etc/rc.local
+      line: usbmuxd
+      insertbefore: ^exit 0$
+
+  - name: create iPhone interface
+    uci:
+      command: add
+      key: network.iphone
+      type: interface
+
+  - name: configure iPhone interface
+    uci:
+      command: set
+      key: network.iphone
+      value:
+        proto: dhcp
+        device: eth2
+        metric: '20'
+
+  # multi WAN
+  # =========
+  # Make wired WAN port the primary, but fallback to iPhone tethering if available.
+  - name: configure mwan3
+    ansible.builtin.copy:
+      content: |-
+        config globals 'globals'
+          option mmx_mask '0x3F00'
+
+        config interface 'wan'
+          option enabled '1'
+          option family 'ipv4'
+          option reliability '2'
+          list track_ip '1.1.1.1'
+          list track_ip '1.0.0.1'
+          list track_ip '8.8.8.8'
+          list track_ip '8.8.4.4'
+
+        config interface 'wan6'
+          option enabled '1'
+          option family 'ipv6'
+          option reliability '2'
+          list track_ip '2001:4860:4860::8844'
+          list track_ip '2001:4860:4860::8888'
+          list track_ip '2620:0:ccd::2'
+          list track_ip '2620:0:ccc::2'
+
+        config interface 'iphone'
+          option enabled '1'
+          option family 'ipv4'
+          option reliability '2'
+          list track_ip '1.1.1.1'
+          list track_ip '1.0.0.1'
+          list track_ip '8.8.8.8'
+          list track_ip '8.8.4.4'
+
+        config member 'm_wan'
+          option interface 'wan'
+          option metric '1'
+          option weight '1'
+
+        config member 'm_wan6'
+          option interface 'wan6'
+          option metric '1'
+          option weight '1'
+
+        config member 'm_iphone'
+          option interface 'iphone'
+          option metric '2'
+          option weight '1'
+
+        config policy 'default'
+          list use_member 'm_wan'
+          list use_member 'm_wan6'
+          list use_member 'm_iphone'
+
+        config rule 'default_rule_v4'
+          option dest_ip '0.0.0.0/0'
+          option use_policy 'default'
+          option family 'ipv4'
+
+        config rule 'default_rule_v6'
+          option dest_ip '::/0'
+          option use_policy 'default'
+          option family 'ipv6'
+      dest: /etc/config/mwan3
+    notify: reload mwan3
+
+  # Mullvad VPN
+  # ===========
+  - name: create Mullvad wireguard interface
+    uci:
+      command: add
+      key: network.mullvad
+      type: interface
+    notify: commit changes
+
+  - name: configure Mullvad interface
+    uci:
+      command: set
+      key: network.mullvad
+      value:
+        proto: wireguard
+        private_key: "{{ mullvad_privkey }}"
+        addresses:
+        - 10.64.99.121/32
+        - fc00:bbbb:bbbb:bb01::1:6378/128
+    notify: commit changes
+
+  # TODO: loop thru list of pubkey+ip combos. 
+  - name: add peer to Mullvad interface
+    uci:
+      command: add
+      key: network.mullvad_de12
+      type: wireguard_mullvad
+    notify: commit changes
+
+  - name: configure Mullvad peer
+    uci:
+      command: set
+      key: network.mullvad_de12
+      value:
+        public_key: "{{ mullvad_de12_pubkey }}"
+        endpoint_host: 193.27.14.66
+        endpoint_port: 51820
+        route_allowed_ips: '1'
+        allowed_ips:
+        - 0.0.0.0/0
+        - ::0/0
+    notify:
+    - commit changes
+    - reload network
+
+  - name: forward all DNS requests to Mullvad
+    uci:
+      command: set
+      key: dhcp.@dnsmasq[0].server
+      value: 10.64.0.1
+    notify:
+    - commit changes
+    - reload dnsmasq
+
+  - name: direct DHCP clients to use Mullvad DNS
+    uci:
+      command: set
+      key: dhcp.lan.dhcp_option
+      value: 6,10.64.0.1
+    notify:
+    - commit changes
+    - reload dnsmasq
+
+  - name: ignore peer DNS provided by upstream WANs
+    uci:
+      command: set
+      key: network.{{ item }}.peerdns
+      value: '0'
+    with_items: [wan, wan6, iphone]
+  
+  - name: Configure WAN networks
+    uci:
+      command: set
+      key: firewall.@zone[1].network
+      value:
+      - wan
+      - wan6
+      - iphone
+      - mullvad
+    notify:
+    - commit changes
+    - reload firewall
+
+  handlers:
+  - name: commit changes
+    uci:
+      command: commit
+  - name: reload network
+    service:
+      name: network
+      state: reloaded
+  - name: reload firewall
+    service:
+      name: firewall
+      state: reloaded
+  - name: reload dnsmasq
+    service:
+      name: dnsmasq
+      state: reloaded
+  - name: reload mwan3
+    service:
+      name: mwan3
+      state: reloaded
