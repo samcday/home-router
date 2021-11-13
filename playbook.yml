@@ -34,8 +34,6 @@
     - openssh-sftp-server
     - python3
     - tailscale
-    - adblock
-    - luci-app-adblock
     - kmod-usb-net-ipheth
     - usbmuxd
     - libimobiledevice
