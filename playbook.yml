@@ -126,17 +126,17 @@
 
         config member 'm_wan'
           option interface 'wan'
-          option metric '1'
+          option metric '2'
           option weight '1'
 
         config member 'm_wan6'
           option interface 'wan6'
-          option metric '1'
+          option metric '2'
           option weight '1'
 
         config member 'm_iphone'
           option interface 'iphone'
-          option metric '2'
+          option metric '1'
           option weight '1'
 
         config policy 'default'
