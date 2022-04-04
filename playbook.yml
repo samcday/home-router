@@ -29,17 +29,21 @@
 
   tasks:
   - name: install packages
+    tags: [packages, opkg]
     opkg: name={{ item }} state=present
     with_items:
     - openssh-sftp-server
     - python3
     - tailscale
-    - kmod-usb-net-ipheth
-    - usbmuxd
-    - libimobiledevice
-    - usbutils
     - mwan3
     - luci-app-mwan3
+    # iPhone/LTE tethering stuff
+    - usbutils
+    - libimobiledevice
+    - usbmuxd
+    - kmod-usb-net-ipheth
+    - usb-modeswitch
+    - kmod-usb-net-cdc-ether
 
   - name: Add pubkey
     ansible.builtin.lineinfile:
@@ -65,7 +69,7 @@
         key: "{{ wifi_password }}"
     with_items: [radio0, radio1]
 
-  # iPhone tethering
+  # LTE tethering
   # ================
   - name: autostart usbmuxd
     ansible.builtin.lineinfile:
@@ -73,16 +77,16 @@
       line: usbmuxd
       insertbefore: ^exit 0$
 
-  - name: create iPhone interface
+  - name: create lte interface
     uci:
       command: add
-      key: network.iphone
+      key: network.lte
       type: interface
 
-  - name: configure iPhone interface
+  - name: configure lte interface
     uci:
       command: set
-      key: network.iphone
+      key: network.lte
       value:
         proto: dhcp
         device: eth2
@@ -90,7 +94,7 @@
 
   # multi WAN
   # =========
-  # Make wired WAN port the primary, but fallback to iPhone tethering if available.
+  # Make wired WAN port the primary, but fallback to LTE tethering if available.
   - name: configure mwan3
     ansible.builtin.copy:
       content: |-
@@ -115,7 +119,7 @@
           list track_ip '2620:0:ccd::2'
           list track_ip '2620:0:ccc::2'
 
-        config interface 'iphone'
+        config interface 'lte'
           option enabled '1'
           option family 'ipv4'
           option reliability '2'
@@ -134,15 +138,15 @@
           option metric '2'
           option weight '1'
 
-        config member 'm_iphone'
-          option interface 'iphone'
+        config member 'm_lte'
+          option interface 'lte'
           option metric '1'
           option weight '1'
 
         config policy 'default'
           list use_member 'm_wan'
           list use_member 'm_wan6'
-          list use_member 'm_iphone'
+          list use_member 'm_lte'
 
         config rule 'default_rule_v4'
           option dest_ip '0.0.0.0/0'
@@ -231,7 +235,7 @@
       command: set
       key: network.{{ item }}.peerdns
       value: '0'
-    with_items: [wan, wan6, iphone]
+    with_items: [wan, wan6, lte]
   
   - name: Configure WAN networks
     tags: [mullvad]
@@ -241,7 +245,7 @@
       value:
       - wan
       - wan6
-      - iphone
+      - lte
       - mullvad
     notify:
     - commit changes
