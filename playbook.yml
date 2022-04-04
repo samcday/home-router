@@ -159,6 +159,7 @@
   # Mullvad VPN
   # ===========
   - name: create Mullvad wireguard interface
+    tags: [mullvad]
     uci:
       command: add
       key: network.mullvad
@@ -166,6 +167,7 @@
     notify: commit changes
 
   - name: configure Mullvad interface
+    tags: [mullvad]
     uci:
       command: set
       key: network.mullvad
@@ -179,6 +181,7 @@
 
   # TODO: loop thru list of pubkey+ip combos. 
   - name: add peer to Mullvad interface
+    tags: [mullvad]
     uci:
       command: add
       key: network.mullvad_de12
@@ -186,6 +189,7 @@
     notify: commit changes
 
   - name: configure Mullvad peer
+    tags: [mullvad]
     uci:
       command: set
       key: network.mullvad_de12
@@ -202,6 +206,7 @@
     - reload network
 
   - name: forward all DNS requests to Mullvad
+    tags: [mullvad]
     uci:
       command: set
       key: dhcp.@dnsmasq[0].server
@@ -211,6 +216,7 @@
     - reload dnsmasq
 
   - name: direct DHCP clients to use Mullvad DNS
+    tags: [mullvad]
     uci:
       command: set
       key: dhcp.lan.dhcp_option
@@ -220,6 +226,7 @@
     - reload dnsmasq
 
   - name: ignore peer DNS provided by upstream WANs
+    tags: [mullvad]
     uci:
       command: set
       key: network.{{ item }}.peerdns
@@ -227,6 +234,7 @@
     with_items: [wan, wan6, iphone]
   
   - name: Configure WAN networks
+    tags: [mullvad]
     uci:
       command: set
       key: firewall.@zone[1].network
